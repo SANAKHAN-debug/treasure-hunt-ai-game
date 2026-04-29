@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Treasure Hunt AI Game</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="treasure-hunt-ai-game.css">
+</head>
+<body>
+  <div class="hacker-avatar-container">
+    <img src="https://cdn.pixabay.com/photo/2017/01/31/19/12/avatar-2026510_1280.png" alt="Hacker avatar" class="hacker-avatar">
+    <div class="hacker-title">Hacker Hunter</div>
+  </div>
+
+  <div class="toolbar">
+    <select id="level-select">
+      <option value="10">Easy (10x10)</option>
+      <option value="15">Medium (15x15)</option>
+      <option value="20" selected>Hard (20x20)</option>
+    </select>
+  </div>
+  <!-- 🟩 Mobile Controls -->
+  <div class="mobile-controls">
+    <button data-dir="up">⬆️</button>
+    <br>
+    <button data-dir="left">⬅️</button>
+    <button data-dir="down">⬇️</button>
+    <button data-dir="right">➡️</button>
+  </div>
+  <div id="hint" class="hint"></div>
+  <div id="timer" class="stat">Time: 0s</div>
+  <div id="score" class="stat">Score: 1000</div>
+  <div id="grid" style="display: grid; margin: 12px auto; max-width: 95vw;"></div>
+  <script src="treasure-hunt-ai-game.js"></script>
+</body>
+</html>
