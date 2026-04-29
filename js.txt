@@ -1,0 +1,330 @@
+// --- Cell types
+const CELL_EMPTY = 0, CELL_WALL = 1, CELL_DISTURBANCE = 2, CELL_FRUIT = 3;
+
+// --- Sounds
+const fruitSounds = [ new Audio("https://cdn.pixabay.com/audio/2022/03/15/audio_115b9d5d40.mp3") ];
+const disturbSound = new Audio("https://cdn.pixabay.com/audio/2022/10/16/audio_12fc139f17.mp3");
+const diamondSound = new Audio("https://cdn.pixabay.com/audio/2022/03/15/audio_115b9d5d40.mp3");
+const lostSound = new Audio("https://cdn.pixabay.com/audio/2022/10/16/audio_12fc139f17.mp3");
+
+// --- State
+let ROWS = 20, COLS = 20;
+const gridEl = document.getElementById("grid");
+let grid = [];
+let cellEls = [];
+let start = { r: 1, c: 1 };
+let goal = { r: ROWS - 2, c: COLS - 2 };
+let disturbances = [];
+let fruits = [];
+let ghosts = [];
+let hacker = { r: 1, c: 1 };
+let hackerAlive = true;
+let score = 1000;
+let fruitEaten = 0;
+let disturbHit = 0;
+let timer = 0, timerInterval = null;
+
+// --- Messages & Hints
+const fruitMessages = [
+  "🍉 Fruit enemy! Penalty!",
+  "🍌 Fruit defense blocked you!",
+  "🍒 Fruit firewall, lost points!"
+];
+const disturbMessages = [
+  "Signal disturbance! Glitch.",
+  "Encryption scramble… DDoS detected!",
+  "System noise. Try again!"
+];
+function manhattan(a, b) { return Math.abs(a.r - b.r) + Math.abs(a.c - b.c); }
+function getHint(r, c) {
+  let dist = manhattan({r,c}, goal);
+  if (dist === 0) return "💎 You hacked the diamond!";
+  if (dist === 1) return "Almost cracked it!";
+  if (dist <= 2) return "Very close!";
+  if (dist <= 5) return "Warm. Cyberspace narrows…";
+  if (dist <= 10) return "Some network noise here…";
+  return "Cold. You're lost in cyberspace.";
+}
+function showHint(msg) { document.getElementById("hint").textContent = msg; }
+function updateScore() { document.getElementById("score").textContent = "Score: " + score; }
+function updateTimer() { document.getElementById("timer").textContent = "Time: " + timer + "s"; }
+
+// --- Level selector
+document.getElementById("level-select").addEventListener("change", (e) => {
+  ROWS = COLS = Number(e.target.value);
+  resetGame();
+});
+// --- Timer
+function startTimer() {
+  timer = 0;
+  if (timerInterval) clearInterval(timerInterval);
+  updateTimer();
+  timerInterval = setInterval(() => {
+    timer++; updateTimer();
+    score = Math.max(0, score - 1); updateScore();
+  }, 1000);
+}
+function stopTimer() { if (timerInterval) clearInterval(timerInterval); }
+
+// --- Main grid build
+function buildGrid() {
+  gridEl.innerHTML = "";
+  cellEls = [];
+  for (let r = 0; r < ROWS; r++) {
+    const row = [];
+    for (let c = 0; c < COLS; c++) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      cell.dataset.r = String(r);
+      cell.dataset.c = String(c);
+      gridEl.appendChild(cell);
+      row.push(cell);
+    }
+    cellEls.push(row);
+  }
+}
+
+// --- Maze + hazard generator
+function generateMazeWithFun() {
+  let maze = Array.from({ length: ROWS }, () =>
+    Array.from({ length: COLS }, () => CELL_WALL)
+  );
+  // carve open area (simple for demo; replace with maze algo for challenge!)
+  for (let r = 1; r < ROWS - 1; r++)
+    for (let c = 1; c < COLS - 1; c++)
+      maze[r][c] = CELL_EMPTY;
+  for (let i = 0; i < (ROWS * COLS) / 4.5; i++) {
+    let r = 1 + Math.floor(Math.random() * (ROWS-2));
+    let c = 1 + Math.floor(Math.random() * (COLS-2));
+    maze[r][c] = CELL_WALL;
+  }
+  // Place start, goal
+  start = { r: 1, c: 1 }; goal = { r: ROWS-2, c: COLS-2 };
+  maze[start.r][start.c] = CELL_EMPTY;
+  maze[goal.r][goal.c] = CELL_EMPTY;
+  // Place disturbances/fruits
+  let disturbN = Math.floor(ROWS * COLS / 18), fruitN = Math.floor(ROWS * COLS / 20);
+  let used = new Set([`${start.r},${start.c}`, `${goal.r},${goal.c}`]);
+  disturbances = []; fruits = [];
+  while (disturbances.length < disturbN) {
+    let r = Math.floor(Math.random()*ROWS), c = Math.floor(Math.random()*COLS);
+    if (used.has(`${r},${c}`) || maze[r][c] !== CELL_EMPTY) continue;
+    maze[r][c] = CELL_DISTURBANCE; disturbances.push({r, c}); used.add(`${r},${c}`);
+  }
+  while (fruits.length < fruitN) {
+    let r = Math.floor(Math.random()*ROWS), c = Math.floor(Math.random()*COLS);
+    if (used.has(`${r},${c}`) || maze[r][c] !== CELL_EMPTY) continue;
+    maze[r][c] = CELL_FRUIT; fruits.push({r, c}); used.add(`${r},${c}`);
+  }
+  return maze;
+}
+
+// --- Place hacker and ghosts
+function placeHackerAndGhosts() {
+  hacker = { r: 1, c: 1 };
+  ghosts = [];
+  const ghostCount = Math.max(2, Math.floor((ROWS + COLS) / 8));
+  let spots = [];
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (
+        grid[r][c] === CELL_EMPTY &&
+        !(r === hacker.r && c === hacker.c) &&
+        !(r === goal.r && c === goal.c)
+      ) spots.push({ r, c });
+  for (let i = 0; i < ghostCount; i++) {
+    let idx = Math.floor(Math.random() * spots.length);
+    ghosts.push({ ...spots.splice(idx, 1)[0], hunting: false });
+  }
+}
+
+// --- Full game reset
+function resetGame() {
+  hackerAlive = true;
+  score = 1000; fruitEaten = 0; disturbHit = 0;
+  gridEl.style.gridTemplateColumns = `repeat(${COLS}, 1fr)`;
+  gridEl.style.gridTemplateRows = `repeat(${ROWS}, 1fr)`;
+  buildGrid();
+  grid = generateMazeWithFun();
+  placeHackerAndGhosts();
+  render();
+  showHint("👨‍💻 New hunt! Move with arrow keys/WASD or use mobile buttons.");
+  updateScore();
+  updateTimer();
+  startTimer();
+}
+
+// --- Rendering
+function render() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const el = cellEls[r][c];
+      el.className = "cell";
+      if (grid[r][c] === CELL_WALL) el.classList.add("wall");
+      else if (grid[r][c] === CELL_DISTURBANCE) el.classList.add("disturbance");
+      else if (grid[r][c] === CELL_FRUIT) el.classList.add("fruit");
+      if (r === start.r && c === start.c) el.classList.add("start");
+      else if (r === goal.r && c === goal.c) el.classList.add("goal");
+      el.textContent = "";
+    }
+  }
+  // Overlay hacker
+  if (hackerAlive) cellEls[hacker.r][hacker.c].textContent = "👨‍💻";
+  // Overlay ghosts
+  ghosts.forEach(g =>
+    cellEls[g.r][g.c].textContent = g.hunting ? "👻" : "🫥"
+  );
+}
+
+// --- Game/keyboard controls
+window.addEventListener("keydown", e => {
+  if (!hackerAlive) return;
+  let dr = 0, dc = 0;
+  if (["w","ArrowUp"].includes(e.key)) dr = -1;
+  if (["s","ArrowDown"].includes(e.key)) dr = 1;
+  if (["a","ArrowLeft"].includes(e.key)) dc = -1;
+  if (["d","ArrowRight"].includes(e.key)) dc = 1;
+  if (dr === 0 && dc === 0) return;
+  e.preventDefault();
+  moveHacker(dr, dc);
+});
+
+// --- Mobile controls
+document.querySelectorAll('.mobile-controls button').forEach(btn => {
+  btn.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    if (!hackerAlive) return;
+    let dir = btn.getAttribute('data-dir');
+    if (dir === "up") moveHacker(-1, 0);
+    if (dir === "down") moveHacker(1, 0);
+    if (dir === "left") moveHacker(0, -1);
+    if (dir === "right") moveHacker(0, 1);
+  });
+});
+
+function moveHacker(dr, dc) {
+  if (!hackerAlive) return;
+  let nr = hacker.r + dr, nc = hacker.c + dc;
+  if (
+    nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS ||
+    grid[nr][nc] === CELL_WALL
+  ) {
+    showHint("Can't move there! Wall ahead.");
+    return;
+  }
+  hacker.r = nr; hacker.c = nc;
+  checkHackerCell();
+  moveGhosts(); // Now ghosts move too!
+  render();
+  checkGhostCollision();
+}
+
+function checkHackerCell() {
+  // Fruit
+  if(grid[hacker.r][hacker.c] === CELL_FRUIT) {
+    fruitEaten++;
+    showHint(fruitMessages[Math.floor(Math.random()*fruitMessages.length)]);
+    score = Math.max(0, score - 20);
+    fruitSounds[Math.floor(Math.random()*fruitSounds.length)].play();
+    grid[hacker.r][hacker.c] = CELL_EMPTY;
+    updateScore();
+  }
+  // Disturbance
+  if(grid[hacker.r][hacker.c] === CELL_DISTURBANCE) {
+    disturbHit++;
+    showHint(disturbMessages[Math.floor(Math.random()*disturbMessages.length)]);
+    score = Math.max(0, score - 10);
+    disturbSound.play();
+    grid[hacker.r][hacker.c] = CELL_EMPTY;
+    updateScore();
+  }
+  // Goal/Diamond
+  if(hacker.r === goal.r && hacker.c === goal.c) {
+    showHint("💎 YOU WIN! You hacked the diamond.");
+    diamondSound.play();
+    hackerAlive = false;
+    stopTimer();
+    score += 100;
+    updateScore();
+  }
+}
+
+// --- Ghost logic
+function moveGhosts() {
+  for(let ghost of ghosts) {
+    // Wake up if they see the hacker
+    if (!ghost.hunting) {
+      if (canSeeHacker(ghost)) ghost.hunting = true;
+    }
+    if (ghost.hunting) {
+      // Move one step toward hacker
+      let {r, c} = ghost;
+      let queue = [{r, c, prev: null}];
+      let visited = Array.from({length: ROWS}, ()=>Array(COLS).fill(false));
+      visited[r][c] = true;
+      let found = null;
+      let dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+      while(queue.length) {
+        let node = queue.shift();
+        if(node.r === hacker.r && node.c === hacker.c) {
+          found = node; break;
+        }
+        for(let [dr,dc] of dirs) {
+          let nr = node.r+dr, nc = node.c+dc;
+          if(nr<0||nr>=ROWS||nc<0||nc>=COLS) continue;
+          if(grid[nr][nc]===CELL_WALL) continue;
+          if(visited[nr][nc]) continue;
+          queue.push({r:nr, c:nc, prev:node});
+          visited[nr][nc]=true;
+        }
+      }
+      // Move one step along path to hacker (if found, else stay)
+      if(found && found.prev) {
+        let path = [];
+        let n = found;
+        while(n.prev) { path.push(n); n = n.prev; }
+        let step = path[path.length-1];
+        ghost.r = step.r; ghost.c = step.c;
+      }
+    } else {
+      // Random/sentry move (not hunting)
+      let choices = [[1,0],[-1,0],[0,1],[0,-1]].filter(([dr,dc]) => {
+        let nr = ghost.r+dr, nc = ghost.c+dc;
+        return nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&grid[nr][nc]===CELL_EMPTY&&!(nr===goal.r&&nc===goal.c);
+      });
+      if(choices.length) {
+        let [dr,dc] = choices[Math.floor(Math.random()*choices.length)];
+        ghost.r += dr; ghost.c += dc;
+      }
+    }
+  }
+}
+function canSeeHacker(ghost) {
+  // See: same row or col, with no wall between
+  if(ghost.r === hacker.r) {
+    let min = Math.min(ghost.c, hacker.c)+1, max = Math.max(ghost.c, hacker.c);
+    for(let c=min; c<max; c++) if(grid[ghost.r][c]===CELL_WALL) return false;
+    return true;
+  }
+  if(ghost.c === hacker.c) {
+    let min = Math.min(ghost.r, hacker.r)+1, max = Math.max(ghost.r, hacker.r);
+    for(let r=min; r<max; r++) if(grid[r][ghost.c]===CELL_WALL) return false;
+    return true;
+  }
+  return false;
+}
+
+// --- Game over
+function checkGhostCollision() {
+  for(let ghost of ghosts)
+    if(ghost.r === hacker.r && ghost.c === hacker.c) {
+      hackerAlive = false;
+      showHint("👻 GHOST CAUGHT YOU! GAME OVER.");
+      lostSound.play();
+      stopTimer();
+      break;
+    }
+}
+
+// --- Start!
+resetGame();
